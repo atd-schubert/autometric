@@ -1,0 +1,20 @@
+{
+  "name": "example-for-autometric",
+  "version": "1.0.0",
+  "description": "Just an example project to show the functionality of autometric",
+  "main": "index.ts",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "ts-node ./index.ts"
+  },
+  "author": "Arne Schubert",
+  "license": "ISC",
+  "dependencies": {
+    "@types/request": "^2.47.0",
+    "autometric": "file:autometric.tgz",
+    "prom-client": "^11.0.0",
+    "request": "^2.85.0",
+    "ts-node": "^6.0.3",
+    "typescript": "^2.8.3"
+  }
+}
