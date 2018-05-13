@@ -45,6 +45,9 @@ describe("AutometricStream", () => {
             it("should have the ends counter in the register", () => {
                 expect(AutometricStreamPipe.register.getSingleMetric(name + "_ends")).instanceOf(Counter);
             });
+            it("should have the incoming chunks counter in the register", () => {
+                expect(AutometricStreamPipe.register.getSingleMetric(name + "_incoming_chunks")).instanceOf(Counter);
+            });
             it("should have the non_emits counter in the register", () => {
                 expect(AutometricStreamPipe.register.getSingleMetric(name + "_non_emits")).instanceOf(Counter);
             });
@@ -113,6 +116,25 @@ describe("AutometricStream", () => {
                 done();
             }, 10);
         });
+        it("should count an end", (done: MochaDone) => {
+            AutometricStreamPipe.register.getSingleMetric(name + "_incoming_chunks").reset();
+            const inPipe = new Pipe();
+            const outPipe = new Pipe();
+            const autometricStream = new AutometricStreamPipe();
+            inPipe.pipe(autometricStream).pipe(outPipe);
+            outPipe.on("data", () => {
+                // do nothing, just consume...
+            });
+
+            inPipe.write("first chunk");
+            inPipe.write("second chunk");
+            inPipe.end("third chunk");
+            setTimeout(() => {
+                expect((AutometricStreamPipe.register.getSingleMetric(name + "_incoming_chunks") as any)
+                    .get().values[0].value).equal(3);
+                done();
+            }, 10);
+        });
         it("should count a non-emit", (done: MochaDone) => {
             AutometricStreamPipe.register.getSingleMetric(name + "_non_emits").reset();
             const inPipe = new Pipe();
@@ -133,25 +155,107 @@ describe("AutometricStream", () => {
 
         });
     });
-    // describe("summary", () => {
-    //     let AutometricStreamPipe: IAutometricStreamPipeConstructor;
-    //     const name = "summaries";
-    //     before(() => {
-    //         AutometricStreamPipe = createAutometricStreamPipe(name);
-    //     });
+    describe("summary", () => {
+        let AutometricStreamPipe: IAutometricStreamPipeConstructor;
+        const name = "summaries";
+        before(() => {
+            AutometricStreamPipe = createAutometricStreamPipe(name);
+        });
 
-    //     it("should measure execution duration", () => {
-    //         return new AutometricStreamPipe((resolve) => {
-    //             setTimeout(() => {
-    //                 resolve(true);
-    //             }, 1000);
-    //         }).then(() => {
-    //             const values: any[] = (AutometricStreamPipe.register.getSingleMetric(name + "_durations") as any)
-    //                 .get().values;
-    //             expect(
-    //                 values[values.length - 2].value,
-    //             ).greaterThan(999).lessThan(1010);
-    //         });
-    //     });
-    // });
+        it("should measure execution duration", (done: MochaDone) => {
+            AutometricStreamPipe.register.getSingleMetric(name + "_durations").reset();
+            const inPipe = new Pipe();
+            const outPipe = new Pipe();
+            const autometricStream = new AutometricStreamPipe();
+            inPipe.pipe(autometricStream).pipe(outPipe);
+            outPipe.on("data", () => {
+                // do nothing, just consume...
+            });
+
+            inPipe.write("test");
+            setTimeout(() => {
+                inPipe.end();
+                setTimeout(() => {
+                    const values: any[] = (AutometricStreamPipe.register.getSingleMetric(name + "_durations") as any)
+                        .get().values;
+                    expect(values[values.length - 2].value).greaterThan(999).lessThan(1010);
+                    done();
+                }, 10);
+            }, 1000);
+        });
+        it("should measure execution duration after the first chunk", (done: MochaDone) => {
+            AutometricStreamPipe.register.getSingleMetric(name + "_durations").reset();
+            const inPipe = new Pipe();
+            const outPipe = new Pipe();
+            const autometricStream = new AutometricStreamPipe();
+            inPipe.pipe(autometricStream).pipe(outPipe);
+            outPipe.on("data", () => {
+                // do nothing, just consume...
+            });
+
+            setTimeout(() => {
+                inPipe.write("test");
+            }, 100);
+            setTimeout(() => {
+                inPipe.end();
+                setTimeout(() => {
+                    const values: any[] = (AutometricStreamPipe.register.getSingleMetric(name + "_durations") as any)
+                        .get().values;
+                    expect(values[values.length - 2].value).greaterThan(890).lessThan(910);
+                    done();
+                }, 10);
+            }, 1000);
+        });
+        it("should measure the number of chunks per stream", (done: MochaDone) => {
+            AutometricStreamPipe.register.getSingleMetric(name + "_num_chunks").reset();
+            const inPipe = new Pipe();
+            const outPipe = new Pipe();
+            const autometricStream = new AutometricStreamPipe();
+            inPipe.pipe(autometricStream).pipe(outPipe);
+            outPipe.on("data", () => {
+                // do nothing, just consume...
+            });
+
+            let nums = 13;
+            const intv = setInterval(() => {
+                if (nums === 0) {
+                    inPipe.end();
+                    clearInterval(intv);
+                    return;
+                }
+                nums -= 1;
+                inPipe.write("chunk...");
+            }, 10);
+
+            outPipe.on("end", () => {
+                const values: any[] = (AutometricStreamPipe.register.getSingleMetric(name + "_num_chunks") as any)
+                    .get().values;
+                expect(values[values.length - 2].value).equal(13);
+                done();
+            });
+        });
+
+        it("should measure the throughput per stream", (done: MochaDone) => {
+            AutometricStreamPipe.register.getSingleMetric(name + "_throughput").reset();
+            const inPipe = new Pipe();
+            const outPipe = new Pipe();
+            const autometricStream = new AutometricStreamPipe();
+            inPipe.pipe(autometricStream).pipe(outPipe);
+            outPipe.on("data", () => {
+                // do nothing, just consume...
+            });
+
+            for (let i = 0; i < 13 ; i += 1) {
+                inPipe.write("chunk...");
+            }
+            inPipe.end();
+
+            outPipe.on("end", () => {
+                const values: any[] = (AutometricStreamPipe.register.getSingleMetric(name + "_throughput") as any)
+                    .get().values;
+                expect(values[values.length - 2].value).equal(13 * 8);
+                done();
+            });
+        });
+    });
 });
