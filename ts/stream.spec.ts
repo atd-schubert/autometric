@@ -244,25 +244,6 @@ describe("AutometricStream", () => {
 
             inPipe.end("Just a test");
         });
-        it("should count an end", (done: MochaDone) => {
-            AutometricStreamPipe.register.getSingleMetric(name + "_incoming_chunks").reset();
-            const inPipe = new Pipe();
-            const outPipe = new Pipe();
-            const autometricStream = new AutometricStreamPipe();
-            inPipe.pipe(autometricStream).pipe(outPipe);
-            outPipe.on("data", () => {
-                // do nothing, just consume...
-            });
-
-            inPipe.write("first chunk");
-            inPipe.write("second chunk");
-            inPipe.end("third chunk");
-            setTimeout(() => {
-                expect((AutometricStreamPipe.register.getSingleMetric(name + "_incoming_chunks") as any)
-                    .get().values[0].value).equal(3);
-                done();
-            }, 10);
-        });
         it("should count a non-emit", (done: MochaDone) => {
             AutometricStreamPipe.register.getSingleMetric(name + "_non_emits_total").reset();
             const inPipe = new Pipe();
@@ -319,7 +300,7 @@ describe("AutometricStream", () => {
         });
 
         it("should measure execution duration", (done: MochaDone) => {
-            AutometricStreamPipe.register.getSingleMetric(name + "_durations").reset();
+            AutometricStreamPipe.register.getSingleMetric(name + "_durations_ms").reset();
             const inPipe = new Pipe();
             const outPipe = new Pipe();
             const autometricStream = new AutometricStreamPipe();
@@ -332,7 +313,7 @@ describe("AutometricStream", () => {
             setTimeout(() => {
                 inPipe.end();
                 setTimeout(() => {
-                    const values: any[] = (AutometricStreamPipe.register.getSingleMetric(name + "_durations") as any)
+                    const values: any[] = (AutometricStreamPipe.register.getSingleMetric(name + "_durations_ms") as any)
                         .get().values;
                     expect(values[values.length - 2].value).greaterThan(999).lessThan(1010);
                     done();
@@ -340,7 +321,7 @@ describe("AutometricStream", () => {
             }, 1000);
         });
         it("should measure execution duration after the first chunk", (done: MochaDone) => {
-            AutometricStreamPipe.register.getSingleMetric(name + "_durations").reset();
+            AutometricStreamPipe.register.getSingleMetric(name + "_durations_ms").reset();
             const inPipe = new Pipe();
             const outPipe = new Pipe();
             const autometricStream = new AutometricStreamPipe();
@@ -355,15 +336,15 @@ describe("AutometricStream", () => {
             setTimeout(() => {
                 inPipe.end();
                 setTimeout(() => {
-                    const values: any[] = (AutometricStreamPipe.register.getSingleMetric(name + "_durations") as any)
+                    const values: any[] = (AutometricStreamPipe.register.getSingleMetric(name + "_durations_ms") as any)
                         .get().values;
                     expect(values[values.length - 2].value).greaterThan(890).lessThan(910);
                     done();
                 }, 10);
             }, 1000);
         });
-        it("should measure the number of chunks per stream", (done: MochaDone) => {
-            AutometricStreamPipe.register.getSingleMetric(name + "_num_chunks").reset();
+        it("should measure the number of chunks in one stream", (done: MochaDone) => {
+            AutometricStreamPipe.register.getSingleMetric(name + "_chunk_sizes_bytes").reset();
             const inPipe = new Pipe();
             const outPipe = new Pipe();
             const autometricStream = new AutometricStreamPipe();
@@ -384,15 +365,16 @@ describe("AutometricStream", () => {
             }, 10);
 
             outPipe.on("end", () => {
-                const values: any[] = (AutometricStreamPipe.register.getSingleMetric(name + "_num_chunks") as any)
+                const values: any[] =
+                    (AutometricStreamPipe.register.getSingleMetric(name + "_chunk_sizes_bytes") as any)
                     .get().values;
-                expect(values[values.length - 2].value).equal(13);
+                expect(values[values.length - 1].value).equal(13);
                 done();
             });
         });
 
         it("should measure the throughput per stream", (done: MochaDone) => {
-            AutometricStreamPipe.register.getSingleMetric(name + "_throughput").reset();
+            AutometricStreamPipe.register.getSingleMetric(name + "_throughput_bytes").reset();
             const inPipe = new Pipe();
             const outPipe = new Pipe();
             const autometricStream = new AutometricStreamPipe();
@@ -407,7 +389,7 @@ describe("AutometricStream", () => {
             inPipe.end();
 
             outPipe.on("end", () => {
-                const values: any[] = (AutometricStreamPipe.register.getSingleMetric(name + "_throughput") as any)
+                const values: any[] = (AutometricStreamPipe.register.getSingleMetric(name + "_throughput_bytes") as any)
                     .get().values;
                 expect(values[values.length - 2].value).equal(13 * 8);
                 done();
