@@ -1,8 +1,14 @@
-import { Counter, Registry, Summary } from "prom-client";
-import { IAutometricCallOptions, IAutometricCreateOptions } from "./common";
+import perfNow from "performance-now";
+import { Registry } from "prom-client";
+import {
+    createCounter,
+    createRegistry,
+    createSummary,
+    IAutometricCallOptions,
+    IAutometricCreateOptions,
+} from "./common";
 
 export interface ICreateAutometricPromiseOptions extends IAutometricCreateOptions {
-    labels?: {[name: string]: string};
     promise?: PromiseConstructorLike;
 }
 
@@ -18,6 +24,7 @@ export interface IAutometricPromiseOptions extends IAutometricCallOptions {
         createOptions: ICreateAutometricPromiseOptions,
         callOptions: IAutometricPromiseOptions,
     ) => {[name: string]: string};
+    noStatusLabel?: boolean;
 }
 
 export interface IAutometricPromiseLike<T> extends PromiseLike<T> {}
@@ -32,27 +39,20 @@ export function createAutometricPromise(
     name: string,
     baseOptions: ICreateAutometricPromiseOptions = {},
 ): IAutometricPromiseLikeConstructor {
-    const register: Registry = new Registry();
+    const register = createRegistry();
+    const { registers = [] } = baseOptions;
+    registers.push(register);
+
     const metrics = {
-        calls: new Counter({
+        calls: createCounter({
             help: `Autometric Counter for calls of the "${ name }" Promise`,
-            name: name + "_calls",
-            registers: [register],
+            name: name + "_calls_total",
+            registers,
         }),
-        durations: new Summary({
+        durations: createSummary({
             help: `Autometric Summary for the durations of the "${ name }" Promise`,
-            name: name + "_durations",
-            registers: [register],
-        }),
-        rejects: new Counter({
-            help: `Autometric Counter for rejects of the "${ name }" Promise`,
-            name: name + "_rejects",
-            registers: [register],
-        }),
-        resolves: new Counter({
-            help: `Autometric Counter for resolves of the "${ name }" Promise`,
-            name: name + "_resolves",
-            registers: [register],
+            name: name + "_durations_ms",
+            registers,
         }),
     };
 
@@ -71,25 +71,30 @@ export function createAutometricPromise(
             executor: (resolve: (value?: T | PromiseLike<T>) => void, reject: (reason?: any) => void) => void,
             options: IAutometricPromiseOptions = {},
         ) {
+            const startTimestamp = perfNow();
             const startDate = new Date();
             options.labels = options.labels || {};
             options.rewriteLabels = options.rewriteLabels || ((passLabels) => passLabels as any);
             let currentLabels: {[name: string]: string} = {...AutometricPromise.labels, ...options.labels};
-            metrics.calls.inc(currentLabels as any, 1, startDate);
+            metrics.calls.inc(currentLabels, 1, startDate);
 
             super((resolve, reject) => {
                 const intResolve: (value?: T | PromiseLike<T>) => void = (result) => {
-                    const endDate = new Date();
+                    const endTimestamp = perfNow();
+                    if (!options.noStatusLabel) {
+                        currentLabels = { ...currentLabels, status: "resolve" };
+                    }
                     currentLabels = options.rewriteLabels!(currentLabels, result, baseOptions, options);
-                    metrics.resolves.inc(currentLabels as any, 1, endDate);
-                    metrics.durations.observe(currentLabels as any, endDate.getTime() - startDate.getTime());
+                    metrics.durations.observe(currentLabels, endTimestamp - startTimestamp);
                     resolve(result);
                 };
                 const intReject: (reason?: any) => void = (reason) => {
-                    const endDate = new Date();
+                    const endTimestamp = perfNow();
+                    if (!options.noStatusLabel) {
+                        currentLabels = { ...currentLabels, status: "reject" };
+                    }
                     currentLabels = options.rewriteLabels!(currentLabels, reason, baseOptions, options);
-                    metrics.rejects.inc(currentLabels as any, 1, endDate);
-                    metrics.durations.observe(currentLabels as any, endDate.getTime() - startDate.getTime());
+                    metrics.durations.observe(currentLabels, endTimestamp - startTimestamp);
                     reject(reason);
                 };
                 executor(intResolve, intReject);

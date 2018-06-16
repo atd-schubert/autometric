@@ -5,13 +5,14 @@
   "main": "index.ts",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "ts-node ./index.ts"
+    "start": "ts-node -P tsconfig.json ./index.ts"
   },
   "author": "Arne Schubert",
   "license": "ISC",
   "dependencies": {
     "@types/request": "^2.47.0",
     "autometric": "file:autometric.tgz",
+    "express": "^4.16.3",
     "prom-client": "^11.0.0",
     "request": "^2.85.0",
     "ts-node": "^6.0.3",
