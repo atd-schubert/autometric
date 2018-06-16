@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { Counter, Summary } from "prom-client";
 import { createAutometricPromise, IAutometricPromiseLikeConstructor } from "./";
+import {autometricRegister} from "./index";
 
 describe("AutometricPromise", () => {
     describe("creation of the Promise class", () => {
@@ -17,6 +18,11 @@ describe("AutometricPromise", () => {
             class ExtendedPromsise<T> extends Promise<T> {
                 public extendedPromise = true;
             }
+            before(() => {
+                autometricRegister.getSingleMetric("autometric_counters_total").reset();
+                autometricRegister.getSingleMetric("autometric_registers_total").reset();
+                autometricRegister.getSingleMetric("autometric_summaries_total").reset();
+            });
             before(() => {
                 AutometricPromise = createAutometricPromise(name, {
                     labels,
@@ -35,17 +41,22 @@ describe("AutometricPromise", () => {
                 expect(AutometricPromise.labels).to.deep.equal(labels);
             });
             it("should have the calls counter in the register", () => {
-                expect(AutometricPromise.register.getSingleMetric(name + "_calls")).instanceOf(Counter);
+                expect(AutometricPromise.register.getSingleMetric(name + "_calls_total")).instanceOf(Counter);
             });
             it("should have the durations summary in the register", () => {
-                expect(AutometricPromise.register.getSingleMetric(name + "_durations")).instanceOf(Summary);
+                expect(AutometricPromise.register.getSingleMetric(name + "_durations_ms")).instanceOf(Summary);
             });
-            it("should have the resolves counter in the register", () => {
-                expect(AutometricPromise.register.getSingleMetric(name + "_resolves")).instanceOf(Counter);
-            });
-            it("should have the rejects counter in the register", () => {
-                expect(AutometricPromise.register.getSingleMetric(name + "_rejects")).instanceOf(Counter);
-            });
+
+            it("should count the creation of a counters", () => void expect(
+                (autometricRegister.getSingleMetric("autometric_counters_total") as any).get().values[0].value,
+            ).equal(1));
+            it("should count the creation of a register", () => void expect(
+                (autometricRegister.getSingleMetric("autometric_registers_total") as any).get().values[0].value,
+            ).equal(1));
+            it("should count the creation of a summaries", () => void expect(
+                (autometricRegister.getSingleMetric("autometric_summaries_total") as any).get().values[0].value,
+            ).equal(1));
+
             it("should have a static all function", async () => {
                 const result = await AutometricPromise.all(
                     [Promise.resolve(true), AutometricPromise.resolve(true)],
@@ -69,6 +80,7 @@ describe("AutometricPromise", () => {
                 return AutometricPromise
                     .reject(new Error("test"))
                     .then(() => {
+                        /* istanbul ignore next */
                         return Promise.reject(new Error("Error not caught"));
                     })
                     .catch((err: Error) => {
@@ -88,26 +100,64 @@ describe("AutometricPromise", () => {
             new AutometricPromise(() => {
                 // do nothing here...
             });
-            expect((AutometricPromise.register.getSingleMetric(name + "_calls") as any).get().values[0].value).equal(1);
+            expect(
+                (AutometricPromise.register.getSingleMetric(name + "_calls_total") as any).get().values[0].value,
+            ).equal(1);
         });
-        it("should count rejects", () => {
+        it("should count rejects", (done: MochaDone) => {
             new AutometricPromise((resolve, reject) => {
                 reject(new Error("Expected behavior"));
             }).catch(() => {
-                // everything OK...
+                expect(
+                    (AutometricPromise.register.getSingleMetric(name + "_durations_ms") as any)
+                        .get().values
+                        .reduce((prev: null | number, elem: any) => {
+                            if (elem.metricName === name + "_durations_ms_count") {
+                                return elem.value;
+                            }
+                            return prev;
+                        }, null),
+                ).equal(1);
+                expect(
+                    (AutometricPromise.register.getSingleMetric(name + "_durations_ms") as any)
+                        .get().values
+                        .reduce((prev: null | number, elem: any) => {
+                            if (elem.metricName === name + "_durations_ms_count") {
+                                return elem.labels;
+                            }
+                            return prev;
+                        }, null),
+                ).deep.equal({status: "reject"});
+                done();
             });
-            expect(
-                (AutometricPromise.register.getSingleMetric(name + "_rejects") as any).get().values[0].value,
-            ).equal(1);
         });
-        it("should count resolves", () => {
-            AutometricPromise.register.getSingleMetric(name + "_resolves").reset();
-            new AutometricPromise((resolve) => {
+        it("should count resolves", (done: MochaDone) => {
+            AutometricPromise.register.getSingleMetric(name + "_durations_ms").reset();
+            (new AutometricPromise((resolve) => {
                 resolve(true);
+            })).then(() => {
+                expect(
+                    (AutometricPromise.register.getSingleMetric(name + "_durations_ms") as any)
+                        .get().values
+                        .reduce((prev: null | number, elem: any) => {
+                            if (elem.metricName === name + "_durations_ms_count") {
+                                return elem.value;
+                            }
+                            return prev;
+                        }, null),
+                ).equal(1);
+                expect(
+                    (AutometricPromise.register.getSingleMetric(name + "_durations_ms") as any)
+                        .get().values
+                        .reduce((prev: null | number, elem: any) => {
+                            if (elem.metricName === name + "_durations_ms_count") {
+                                return elem.labels;
+                            }
+                            return prev;
+                        }, null),
+                ).deep.equal({status: "resolve"});
+                done();
             });
-            expect(
-                (AutometricPromise.register.getSingleMetric(name + "_resolves") as any).get().values[0].value,
-            ).equal(1);
         });
     });
     describe("summary", () => {
@@ -123,7 +173,7 @@ describe("AutometricPromise", () => {
                     resolve(true);
                 }, 100);
             }).then(() => {
-                const values: any[] = (AutometricPromise.register.getSingleMetric(name + "_durations") as any)
+                const values: any[] = (AutometricPromise.register.getSingleMetric(name + "_durations_ms") as any)
                     .get().values;
                 expect(
                     values[values.length - 2].value,

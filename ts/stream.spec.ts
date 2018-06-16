@@ -2,10 +2,11 @@ import { expect } from "chai";
 import { Counter, Summary } from "prom-client";
 import { PassThrough } from "stream";
 import { createAutometricStreamPipe, IAutometricStreamPipeConstructor} from "./";
+import {autometricRegister} from "./index";
 
 class Pipe extends PassThrough {
-    constructor() {
-        super({transform: (chunk, encoding, next) => { next(undefined, chunk); }});
+    constructor({objectMode = false}: {objectMode?: boolean} = {}) {
+        super({objectMode, transform: (chunk, encoding, next) => { next(undefined, chunk); }});
     }
 }
 
@@ -22,6 +23,11 @@ describe("AutometricStream", () => {
             const name = "static_properties";
             const labels: {[name: string]: string} = {label: "just-a-test"};
             before(() => {
+                autometricRegister.getSingleMetric("autometric_counters_total").reset();
+                autometricRegister.getSingleMetric("autometric_registers_total").reset();
+                autometricRegister.getSingleMetric("autometric_summaries_total").reset();
+            });
+            before(() => {
                 AutometricStreamPipe = createAutometricStreamPipe(name, {
                     labels,
                 });
@@ -33,27 +39,35 @@ describe("AutometricStream", () => {
             it("should have the labels as labels attribute", () => {
                 expect(AutometricStreamPipe.labels).to.deep.equal(labels);
             });
-            it("should have the chunk_sizes summary in the register", () => {
-                expect(AutometricStreamPipe.register.getSingleMetric(name + "_chunk_sizes")).instanceOf(Summary);
+
+            it("should have the chunk-sizes summary in the register", () => {
+                expect(AutometricStreamPipe.register.getSingleMetric(name + "_chunk_sizes_bytes")).instanceOf(Summary);
             });
             it("should have the durations summary in the register", () => {
-                expect(AutometricStreamPipe.register.getSingleMetric(name + "_durations")).instanceOf(Summary);
-            });
-            it("should have the emits counter in the register", () => {
-                expect(AutometricStreamPipe.register.getSingleMetric(name + "_emits")).instanceOf(Counter);
-            });
-            it("should have the ends counter in the register", () => {
-                expect(AutometricStreamPipe.register.getSingleMetric(name + "_ends")).instanceOf(Counter);
-            });
-            it("should have the non_emits counter in the register", () => {
-                expect(AutometricStreamPipe.register.getSingleMetric(name + "_non_emits")).instanceOf(Counter);
-            });
-            it("should have the num_chunks summary in the register", () => {
-                expect(AutometricStreamPipe.register.getSingleMetric(name + "_num_chunks")).instanceOf(Summary);
+                expect(AutometricStreamPipe.register.getSingleMetric(name + "_durations_ms")).instanceOf(Summary);
             });
             it("should have the throughput summary in the register", () => {
-                expect(AutometricStreamPipe.register.getSingleMetric(name + "_throughput")).instanceOf(Summary);
+                expect(AutometricStreamPipe.register.getSingleMetric(name + "_elapsed_time_ms")).instanceOf(Summary);
             });
+            it("should have the ends counter in the register", () => {
+                expect(AutometricStreamPipe.register.getSingleMetric(name + "_ends_total")).instanceOf(Counter);
+            });
+            it("should have the non-emits counter in the register", () => {
+                expect(AutometricStreamPipe.register.getSingleMetric(name + "_non_emits_total")).instanceOf(Counter);
+            });
+            it("should have the throughput summary in the register", () => {
+                expect(AutometricStreamPipe.register.getSingleMetric(name + "_throughput_bytes")).instanceOf(Summary);
+            });
+
+            it("should count the creation of a counters", () => void expect(
+                (autometricRegister.getSingleMetric("autometric_counters_total") as any).get().values[0].value,
+            ).equal(2));
+            it("should count the creation of a register", () => void expect(
+                (autometricRegister.getSingleMetric("autometric_registers_total") as any).get().values[0].value,
+            ).equal(1));
+            it("should count the creation of a summaries", () => void expect(
+                (autometricRegister.getSingleMetric("autometric_summaries_total") as any).get().values[0].value,
+            ).equal(4));
         });
     });
     describe("work as a PassThrough stream", () => {
@@ -74,6 +88,18 @@ describe("AutometricStream", () => {
             });
             inPipe.write("Just a test");
         });
+        it("should pass data in object mode", (done: MochaDone) => {
+            const inPipe = new Pipe({ objectMode: true });
+            const outPipe = new Pipe({ objectMode: true });
+            const autometricStream = new AutometricStreamPipe();
+            inPipe.pipe(autometricStream).pipe(outPipe);
+
+            outPipe.once("data", (data: Buffer) => {
+                expect(data).deep.equal({ message: "Just a test"});
+                done();
+            });
+            inPipe.write({ message: "Just a test"} );
+        });
     });
     describe("counters", () => {
         let AutometricStreamPipe: IAutometricStreamPipeConstructor;
@@ -82,8 +108,8 @@ describe("AutometricStream", () => {
             AutometricStreamPipe = createAutometricStreamPipe(name);
         });
 
-        it("should count a emitted chunk", () => {
-            AutometricStreamPipe.register.getSingleMetric(name + "_emits").reset();
+        it("should count an emitted chunk", () => {
+            AutometricStreamPipe.register.getSingleMetric(name + "_chunk_sizes_bytes").reset();
             const inPipe = new Pipe();
             const outPipe = new Pipe();
             const autometricStream = new AutometricStreamPipe();
@@ -93,28 +119,132 @@ describe("AutometricStream", () => {
                 // do nothing, just consume...
             });
             inPipe.write("Just a test");
-            expect((AutometricStreamPipe.register.getSingleMetric(name + "_emits") as any)
-                .get().values[0].value).equal(1);
+
+            expect((AutometricStreamPipe.register.getSingleMetric(name + "_chunk_sizes_bytes") as any)
+                .get().values.reduce((prev: null | number, elem: any) => {
+                    /* istanbul ignore if */
+                    if (prev) {
+                        return prev;
+                    }
+                    if (elem.metricName === name + "_chunk_sizes_bytes_count") {
+                        return elem.value;
+                    }
+                }, null)).equal(1);
+        });
+
+        it("should summarize the chunk sizes", () => {
+            AutometricStreamPipe.register.getSingleMetric(name + "_chunk_sizes_bytes").reset();
+            const inPipe = new Pipe();
+            const outPipe = new Pipe();
+            const autometricStream = new AutometricStreamPipe();
+            const testStr: string = "Just a test";
+            inPipe.pipe(autometricStream).pipe(outPipe);
+
+            outPipe.on("data", () => {
+                // do nothing, just consume...
+            });
+            inPipe.write(testStr);
+
+            expect((AutometricStreamPipe.register.getSingleMetric(name + "_chunk_sizes_bytes") as any)
+                .get().values.reduce((prev: null | number, elem: any) => {
+                    if (prev) {
+                        return prev;
+                    }
+                    if (elem.metricName === name + "_chunk_sizes_bytes_sum") {
+                        return elem.value;
+                    }
+                }, null)).equal(testStr.length);
+        });
+        it("should summarize the chunk sizes of strings in object mode", () => {
+            AutometricStreamPipe.register.getSingleMetric(name + "_chunk_sizes_bytes").reset();
+            const inPipe = new Pipe({ objectMode: true });
+            const outPipe = new Pipe({ objectMode: true });
+            const autometricStream = new AutometricStreamPipe();
+            const testStr: string = "Just a test";
+            inPipe.pipe(autometricStream).pipe(outPipe);
+
+            outPipe.on("data", () => {
+                // do nothing, just consume...
+            });
+            inPipe.write(testStr);
+
+            expect((AutometricStreamPipe.register.getSingleMetric(name + "_chunk_sizes_bytes") as any)
+                .get().values.reduce((prev: null | number, elem: any) => {
+                    if (prev) {
+                        return prev;
+                    }
+                    if (elem.metricName === name + "_chunk_sizes_bytes_sum") {
+                        return elem.value;
+                    }
+                }, null)).equal(testStr.length);
+        });
+        it("should summarize the chunk sizes of buffers in object mode", () => {
+            AutometricStreamPipe.register.getSingleMetric(name + "_chunk_sizes_bytes").reset();
+            const inPipe = new Pipe({ objectMode: true });
+            const outPipe = new Pipe({ objectMode: true });
+            const autometricStream = new AutometricStreamPipe();
+            const testBuffer: Buffer = Buffer.from("Just a test");
+            inPipe.pipe(autometricStream).pipe(outPipe);
+
+            outPipe.on("data", () => {
+                // do nothing, just consume...
+            });
+            inPipe.write(testBuffer);
+
+            expect((AutometricStreamPipe.register.getSingleMetric(name + "_chunk_sizes_bytes") as any)
+                .get().values.reduce((prev: null | number, elem: any) => {
+                    if (prev) {
+                        return prev;
+                    }
+                    if (elem.metricName === name + "_chunk_sizes_bytes_sum") {
+                        return elem.value;
+                    }
+                }, null)).equal(testBuffer.length);
+        });
+        it("should summarize the number of chunks in pure object mode", () => {
+            AutometricStreamPipe.register.getSingleMetric(name + "_chunk_sizes_bytes").reset();
+            const inPipe = new Pipe({ objectMode: true });
+            const outPipe = new Pipe({ objectMode: true });
+            const autometricStream = new AutometricStreamPipe();
+            const testObj: any = { message: "just a test" };
+            inPipe.pipe(autometricStream).pipe(outPipe);
+
+            outPipe.on("data", () => {
+                // do nothing, just consume...
+            });
+            inPipe.write(testObj);
+            inPipe.write(testObj);
+            inPipe.write(testObj);
+
+            expect((AutometricStreamPipe.register.getSingleMetric(name + "_chunk_sizes_bytes") as any)
+                .get().values.reduce((prev: null | number, elem: any) => {
+                    if (prev) {
+                        return prev;
+                    }
+                    if (elem.metricName === name + "_chunk_sizes_bytes_sum") {
+                        return elem.value;
+                    }
+                }, null)).equal(3);
         });
         it("should count an end", (done: MochaDone) => {
-            AutometricStreamPipe.register.getSingleMetric(name + "_ends").reset();
+            AutometricStreamPipe.register.getSingleMetric(name + "_ends_total").reset();
             const inPipe = new Pipe();
             const outPipe = new Pipe();
             const autometricStream = new AutometricStreamPipe();
             inPipe.pipe(autometricStream).pipe(outPipe);
             outPipe.on("data", () => {
                 // do nothing, just consume...
+            });
+            outPipe.on("finish", () => {
+                expect((AutometricStreamPipe.register.getSingleMetric(name + "_ends_total") as any)
+                    .get().values[0].value).equal(1);
+                done();
             });
 
             inPipe.end("Just a test");
-            setTimeout(() => {
-                expect((AutometricStreamPipe.register.getSingleMetric(name + "_ends") as any)
-                    .get().values[0].value).equal(1);
-                done();
-            }, 10);
         });
         it("should count a non-emit", (done: MochaDone) => {
-            AutometricStreamPipe.register.getSingleMetric(name + "_non_emits").reset();
+            AutometricStreamPipe.register.getSingleMetric(name + "_non_emits_total").reset();
             const inPipe = new Pipe();
             const outPipe = new Pipe();
             const autometricStream = new AutometricStreamPipe();
@@ -122,36 +252,42 @@ describe("AutometricStream", () => {
             outPipe.on("data", () => {
                 // do nothing, just consume...
             });
-
-            inPipe.end();
-
-            setTimeout(() => {
-                expect((AutometricStreamPipe.register.getSingleMetric(name + "_non_emits") as any)
+            outPipe.on("finish", () => {
+                expect((AutometricStreamPipe.register.getSingleMetric(name + "_non_emits_total") as any)
                     .get().values[0].value).equal(1);
                 done();
-            }, 10);
+            });
+
+            inPipe.end();
+        });
+
+        it("should summarize the elapsed time", (done: MochaDone) => {
+            AutometricStreamPipe.register.getSingleMetric(name + "_elapsed_time_ms").reset();
+            const inPipe = new Pipe();
+            const outPipe = new Pipe();
+            const autometricStream = new AutometricStreamPipe();
+            inPipe.pipe(autometricStream).pipe(outPipe);
+            outPipe.on("data", () => {
+                // do nothing, just consume...
+            });
+            outPipe.on("finish", () => {
+                expect((AutometricStreamPipe.register.getSingleMetric(name + "_elapsed_time_ms") as any)
+                    .get().values[0].value).above(49);
+                expect((AutometricStreamPipe.register.getSingleMetric(name + "_elapsed_time_ms") as any)
+                    .get().values[0].value).below(55);
+                done();
+            });
+
+            const chunks = ["just", "a", "test"];
+            const intv: NodeJS.Timer = setInterval(() => {
+                if (chunks.length) {
+                    inPipe.write(chunks.shift());
+                    return;
+                }
+                inPipe.end();
+                clearInterval(intv);
+            }, 50);
 
         });
     });
-    // describe("summary", () => {
-    //     let AutometricStreamPipe: IAutometricStreamPipeConstructor;
-    //     const name = "summaries";
-    //     before(() => {
-    //         AutometricStreamPipe = createAutometricStreamPipe(name);
-    //     });
-
-    //     it("should measure execution duration", () => {
-    //         return new AutometricStreamPipe((resolve) => {
-    //             setTimeout(() => {
-    //                 resolve(true);
-    //             }, 1000);
-    //         }).then(() => {
-    //             const values: any[] = (AutometricStreamPipe.register.getSingleMetric(name + "_durations") as any)
-    //                 .get().values;
-    //             expect(
-    //                 values[values.length - 2].value,
-    //             ).greaterThan(999).lessThan(1010);
-    //         });
-    //     });
-    // });
 });
