@@ -1,6 +1,6 @@
 {
   "name": "autometric",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "A library to create automated metrics over various async pattern",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
@@ -14,11 +14,17 @@
   },
   "devDependencies": {
     "@types/chai": "^4.1.3",
-    "@types/mocha": "^5.2.0",
+    "@types/freeport": "^1.0.21",
+    "@types/mocha": "^5.2.1",
+    "@types/request-promise": "^4.1.41",
     "chai": "^4.1.2",
+    "freeport": "^1.0.5",
     "istanbul": "^0.4.5",
     "mocha": "^5.1.1",
     "prom-client": "^11.0.0",
+    "request": "^2.87.0",
+    "request-promise": "^4.2.2",
+    "ts-node": "^6.0.5",
     "tslint": "^5.10.0",
     "typedoc": "^0.11.1",
     "typescript": "^2.8.3"
@@ -26,7 +32,8 @@
   "scripts": {
     "transpile": "tsc -p .",
     "lint": "tslint ts/*.ts",
-    "test": "npm run lint && npm run transpile && istanbul cover _mocha -- -- test/*.js",
+    "test": "mocha ts/*.spec.ts",
+    "dist": "npm run lint && npm run transpile && istanbul cover _mocha -- -- test/*.js",
     "doc": "typedoc --out ./typedoc/ --mode file ts/"
   },
   "repository": {
@@ -44,5 +51,8 @@
   "bugs": {
     "url": "https://github.com/atd-schubert/autometric/issues"
   },
-  "homepage": "https://github.com/atd-schubert/autometric#readme"
+  "homepage": "https://github.com/atd-schubert/autometric#readme",
+  "dependencies": {
+    "@types/express": "^4.11.1"
+  }
 }

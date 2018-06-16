@@ -8,8 +8,8 @@ The aim of this module is to collect metrics automatically with the
 TypeScript and includes its type definitions, of course. It uses `prom-client` as peer dependency, so don't forget to
 add it to your module!
 
-*This module is in development. Currently supported are Promises and a pass-through stream. The goal is to enhance the
-module with support for child-processes, observables and middleware patterns.*
+*This module is in development. Currently supported are Promises, connect-like middlewares and a pass-through stream.
+The goal is to enhance the module with support for child-processes and observables patterns in future releases.*
 
 ## How to use
 
@@ -21,7 +21,7 @@ npm install --save autometric
 yarn add autometric
 ```
 
-### With Promises
+### Promises
 TypeScript:
 ```typescript
 import { createAutometricPromise, IAutometricPromiseOptions, ICreateAutometricPromiseOptions } from "autometric";
@@ -88,10 +88,9 @@ new AutometricPromise<boolean>((resolve, reject) => {
 
 The promise of autometric will collect the following metrics:
 
-* `name + "_calls"` as Counter: counts Promises that start its execution.
-* `name + "_durations"` as Summary: summary over the duration from execution start until it resolves or rejects.
-* `name + "_rejects"` as Counter: counts Promises that rejects the execution.
-* `name + "_resolves"` as Counter: counts Promises that resolves the execution.
+* `name + "_calls_total"` as Counter: counts Promises that start its execution.
+* `name + "_durations_ms"` as Summary: summary over the duration from execution start until it resolves or rejects.
+It will add a status (success / fail) to the metric as long as not disabled via the `noStatusLabel` option.
 
 ### With the pass-through stream
 
@@ -145,17 +144,76 @@ const writer = createWriteStream("path/to/write");
 reader.pipe(metricsPipe).pipe(writer);
 ```
 
-
 The pass-through pipe of autometric will collect the following metrics:
 
-* `name + "_chunk_sizes"` as Summary: summary over the size in bytes of a chunk (only for strings or Buffers)
-* `name + "_durations"` as Summary: summary over the duration from the first chunk until the end event.
-* `name + "_emits"` as Counter: counts streams that emit data (only once per stream)
-* `name + "_ends"` as Counter: counts streams that ends
-* `name + "_incoming_chunks"` as Counter: counts incoming chunks over all streams
-* `name + "_non_emits"` as Counter: counts streams that ends without emitting any data
-* `name + "_num_chunks"` as Summary: a summary over the number of chunks in one stream
-* `name + "_throughput"` as Summary: a summary over the processed bytes iin one stream
+* `name + "_chunk_sizes_bytes"` as Summary: summary over the size in bytes of a chunk (only for strings or Buffers)
+* `name + "_durations_ms"` as Summary: summary over the duration from the first chunk until the end event.
+* `name + "_elapsed_time_ms"` as Summary: Time between emits of chunks
+* `name + "_ends_total"` as Counter: counts streams that ends
+* `name + "_non_emits_total"` as Counter: counts streams that ends without emitting any data
+* `name + "_throughput_bytes"` as Summary: a summary over the processed bytes in one stream
+
+### Connect-like middlware
+
+*This middleware is build for express, but it should also work with other connect-like middlewares*
+
+TypeScript:
+
+```typescript
+import { createAutometricMiddleware } from "autometric";
+import * as express from "express";
+const app = express();
+
+
+const middlewareObject = createAutometricMiddleware("my_metric_middleware", {labels: {labels: "are-optional"}});
+// function to change the labels after getting a chunk
+const rewriteLabels = (currentLabels, chunk, encoding, createOptions, callOptions) => {
+    return {...currentLabels, encoding};
+};
+// options are optional
+const options = {
+    labels: {
+        additional: "add-additional-labels",
+        labels: "or-overwrite-them",
+        service: "user-auth",
+    },
+    rewriteLabels,
+};
+
+app.get("/api/user", middlewareObject.createMiddleware(options), (req, res) => {
+    // ...
+});
+
+```
+
+JavaScript:
+
+```js
+const { createAutometricMiddleware } = require("autometric");
+const express = require("express");
+const app = express();
+
+
+const middlewareObject = createAutometricMiddleware("my_metric_middleware", {labels: {labels: "are-optional"}});
+// function to change the labels after getting a chunk
+const rewriteLabels = (currentLabels, chunk, encoding, createOptions, callOptions) => {
+    return {...currentLabels, encoding};
+};
+// options are optional
+const options = {
+    labels: {
+        additional: "add-additional-labels",
+        labels: "or-overwrite-them",
+        service: "user-auth",
+    },
+    rewriteLabels,
+};
+
+app.get("/api/user", middlewareObject.createMiddleware(options), (req, res) => {
+    // ...
+});
+
+```
 
 ### Get the metrics
 
@@ -169,7 +227,7 @@ import { register } from "prom-client";
 createServer((req, res) => {
     res.writeHead(200, register.contentType);
     res.end(register.metrics());
-});
+}).listen(9000);
 ```
 
 You can also take the static property `register` of the resulting classes to output only the specific metrics, or merge
@@ -179,14 +237,25 @@ them with other registers:
 AutometricPromise.register.metrics();
 // OR
 AutometricStreamPassThrough.register.metrics();
+// OR
+middlewareObject.register.metrics();
 ```
 
+### Meta metrics from autometric
+
+Autometric also collects metrics from the creation of Autometric metrics collectors. You can access them like this:
+
+```typescript
+import { autometricRegister } from "autometric";
+autometricRegister.metrics();
+```
 
 ## Scripts Tasks
 
 Scripts registered in package.json:
 
 * `transpile`: Transpile TypeScript Code to JavaScript
+* `dist`: Make a ready for distribution version
 * `lint`: Use the linter for TypeScript Code
 * `test`: Run software- and coverage-tests in node.
 * `doc`: Build the API documentation.

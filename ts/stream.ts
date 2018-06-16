@@ -1,6 +1,13 @@
-import { Counter, Registry, Summary } from "prom-client";
-import {PassThrough, TransformCallback} from "stream";
-import { IAutometricCallOptions, IAutometricCreateOptions } from "./common";
+import perfNow from "performance-now";
+import { Registry } from "prom-client";
+import { PassThrough, TransformCallback } from "stream";
+import {
+    createCounter,
+    createRegistry,
+    createSummary,
+    IAutometricCallOptions,
+    IAutometricCreateOptions,
+} from "./common";
 
 export interface IAutometricStreamOptions extends IAutometricCallOptions {
     /**
@@ -27,47 +34,40 @@ export interface IAutometricStreamPipeConstructor {
 export function createAutometricStreamPipe(
     name: string, baseOptions: IAutometricCreateOptions = {},
 ): IAutometricStreamPipeConstructor {
-    const register: Registry = new Registry();
+    const register = createRegistry();
+    const { registers = [] } = baseOptions;
+    registers.push(register);
+
     const metrics = {
-        chunkSizes: new Summary({
+        chunkSizes: createSummary({
             help: `Autometric Summary for the chunk-size of the "${ name }" Stream`,
-            name: name + "_chunk_sizes",
-            registers: [register],
+            name: name + "_chunk_sizes_bytes",
+            registers,
         }),
-        durations: new Summary({
-            help: `Autometric Summary for the durations of the "${ name }" Promise`,
-            name: name + "_durations",
-            registers: [register],
+        durations: createSummary({
+            help: `Autometric Summary for the durations of the "${ name }" Stream`,
+            name: name + "_durations_ms",
+            registers,
         }),
-        emits: new Counter({
-            help: `Autometric Counter for emitted Streams of "${ name }"`,
-            name: name + "_emits",
-            registers: [register],
+        elapsedTime: createSummary({
+            help: `Autometric Summary for the elapsed time between emitted chunks of the "${ name }" Stream`,
+            name: name + "_elapsed_time_ms",
+            registers,
         }),
-        ends: new Counter({
+        ends: createCounter({
             help: `Autometric Counter for ended Streams of "${ name }"`,
-            name: name + "_ends",
-            registers: [register],
+            name: name + "_ends_total",
+            registers,
         }),
-        incomingChunks: new Counter({
-            help: `Autometric Counter for incoming chunks of "${ name }"`,
-            name: name + "_incoming_chunks",
-            registers: [register],
-        }),
-        nonEmits: new Counter({
+        nonEmits: createCounter({
             help: `Autometric Counter for Streams of "${ name }" without emitting data`,
-            name: name + "_non_emits",
-            registers: [register],
+            name: name + "_non_emits_total",
+            registers,
         }),
-        numChunks: new Summary({
-            help: `Autometric Summary for the number of chunks of the "${ name }" Promise`,
-            name: name + "_num_chunks",
-            registers: [register],
-        }),
-        throughput: new Summary({
-            help: `Autometric Summary for the throughput in bytes of the "${ name }" Promise`,
-            name: name + "_throughput",
-            registers: [register],
+        throughput: createSummary({
+            help: `Autometric Summary for the throughput in bytes of the "${ name }" Stream`,
+            name: name + "_throughput_bytes",
+            registers,
         }),
     };
 
@@ -77,42 +77,51 @@ export function createAutometricStreamPipe(
         public static readonly labels: {[name: string]: string} = baseOptions.labels || {};
 
         constructor(options: IAutometricStreamOptions = {}) {
+            let firstTimestamp: number = perfNow(); // set already now a value to prevent bugs with non-emitting streams
             options.labels = options.labels || {};
             options.rewriteLabels = options.rewriteLabels || ((passLabels) => passLabels as any);
             let currentLabels: {[name: string]: string} = {...AutometricStreamPassThrough.labels, ...options.labels};
             let firstChunk = false;
             let throughput: number = 0;
-            let chunks: number = 0;
-            let startDate: Date = new Date(); // set already now a value to prevent bugs with non-emitting streams
+            let previousTimestamp: number;
 
             const transform = (chunk: any, encoding: string, callback: TransformCallback) => {
-                chunks += 1;
+                const startTimestamp = perfNow();
+
                 currentLabels = options.rewriteLabels!(currentLabels, chunk, encoding, baseOptions, options);
-                metrics.incomingChunks.inc(currentLabels, 1, new Date());
-                if (!firstChunk) {
+
+                if (firstChunk) {
+                    metrics.elapsedTime.observe(currentLabels, startTimestamp - previousTimestamp);
+                } else {
                     firstChunk = true;
-                    startDate = new Date();
-                    metrics.emits.inc(currentLabels as any, 1, startDate);
+                    firstTimestamp = startTimestamp;
                 }
+
                 if (chunk instanceof Buffer || typeof chunk === "string") {
-                    metrics.chunkSizes.observe(currentLabels as any, chunk.length);
+                    metrics.chunkSizes.observe(currentLabels, chunk.length);
                     throughput += chunk.length;
+                } else {
+                    metrics.chunkSizes.observe(currentLabels, 1);
+                    throughput += 1;
                 }
+
+                previousTimestamp = perfNow();
                 callback(undefined, chunk);
             };
             super({
+                objectMode: true,
                 transform,
             });
 
             this.on("end", () => {
+                const endTimestamp = perfNow();
                 const endDate = new Date();
                 if (!firstChunk) {
-                    metrics.nonEmits.inc(currentLabels as any, 1, endDate);
+                    metrics.nonEmits.inc(currentLabels, 1, endDate);
                 }
-                metrics.ends.inc(currentLabels as any, 1, endDate);
-                metrics.durations.observe(currentLabels as any, endDate.getTime() - startDate.getTime());
-                metrics.throughput.observe(currentLabels as any, throughput);
-                metrics.numChunks.observe(currentLabels as any, chunks);
+                metrics.ends.inc(currentLabels, 1, endDate);
+                metrics.durations.observe(currentLabels, endTimestamp - firstTimestamp);
+                metrics.throughput.observe(currentLabels, throughput);
             });
         }
     };
