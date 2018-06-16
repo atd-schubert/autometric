@@ -1,29 +1,81 @@
-import { createAutometricStreamPipe } from "autometric";
-import { createServer } from "http";
-// import { register } from "prom-client";
+import { autometricRegister, createAutometricMiddleware, createAutometricStreamPipe } from "autometric";
+import express from "express";
+import { Registry } from "prom-client";
+import { createGzip } from "zlib";
+const server = express();
 
 import request = require("request");
 
-const MetricPipe = createAutometricStreamPipe("radio_stream", {labels: {broadcaster: "1-live"}});
-const register = MetricPipe.register;
+const register = Registry.merge([autometricRegister]);
+const RadioMetricPipe = createAutometricStreamPipe(
+    "radio_stream_pipe",
+    {
+        registers: [register],
+    },
+);
+const CompressionMetricPipe = createAutometricStreamPipe(
+    "compression_pipe",
+    {
+        registers: [register],
+    },
+);
+const autometricRadioMiddlware = createAutometricMiddleware(
+    "radio_stream_middleware",
+    {
+        registers: [register],
+    },
+);
+const autometricCompressMiddlware = createAutometricMiddleware(
+    "compression_route",
+    {
+        registers: [register],
+    },
+);
 
-const server = createServer((req, res) => {
+server.get("/metrics", (req, res) => {
     res.writeHead(200, register.contentType);
     res.end(register.metrics());
-    /* tslint:disable:no-console */
-    console.log(new Date(), "send metrics...");
 });
+
+server.get(
+    "/1live-hq",
+    autometricRadioMiddlware.createMiddleware({ labels: { broadcaster: "1-live", quality: "hq" } }),
+    (req, res) => {
+        res.writeHead(200, {"content-type": "audio/mp3"});
+        request("http://wdr-1live-live.icecast.wdr.de/wdr/1live/live/mp3/128/stream.mp3")
+            .pipe(new RadioMetricPipe({labels: { broadcaster: "1-live", quality: "hq" }}))
+            .pipe(res);
+    },
+);
+server.get(
+    "/1live-lq",
+    autometricRadioMiddlware.createMiddleware({ labels: { broadcaster: "1-live", quality: "lq" } }),
+    (req, res) => {
+        res.writeHead(200, {"content-type": "audio/mp3"});
+        request("http://wdr-1live-live.icecast.wdr.de/wdr/1live/live/mp3/56/stream.mp3")
+            .pipe(new RadioMetricPipe({labels: { broadcaster: "1-live", quality: "lq" }}))
+            .pipe(res);
+    },
+);
+
+server.get(
+    "/radio1-hq",
+    autometricRadioMiddlware.createMiddleware({ labels: { broadcaster: "radio-1", quality: "hq" } }),
+    (req, res) => {
+        res.writeHead(200, {"content-type": "audio/mp3"});
+        request("http://rbb-radioeins-live.cast.addradio.de/rbb/radioeins/live/mp3/128/stream.mp3")
+            .pipe(new RadioMetricPipe({labels: { broadcaster: "radio-1", quality: "hq" }}))
+            .pipe(res);
+    },
+);
+
+server.post("/compress", autometricCompressMiddlware.createMiddleware(), (req, res) => {
+    res.writeHead(200, {"content-type": "application/gzip"});
+    req
+        .pipe(new CompressionMetricPipe({ labels: { state: "uncompressed" } }))
+        .pipe(createGzip())
+        .pipe(new CompressionMetricPipe({ labels: { state: "compressed" } }))
+        .pipe(res);
+});
+
 server.listen(9090);
-
-const hqMetricPipe = new MetricPipe({labels: {quality: "hq", kbps: "128"}});
-const hqStream = request("http://wdr-1live-live.icecast.wdr.de/wdr/1live/live/mp3/128/stream.mp3");
-
-const lqMetricPipe = new MetricPipe({labels: {quality: "lq", kbps: "56"}});
-const lqStream = request("http://wdr-1live-live.icecast.wdr.de/wdr/1live/live/mp3/56/stream.mp3");
-
-hqStream.pipe(hqMetricPipe).on("data", () => {
-  // do nothing, just consume...
-});
-lqStream.pipe(lqMetricPipe).on("data", () => {
-    // do nothing, just consume...
-});

@@ -4,7 +4,7 @@ CURRENT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 cd ${CURRENT_DIR}/..
 
-npm test
+npm run dist
 npm pack
 
 mv autometric-1*.tgz example/autometric.tgz
