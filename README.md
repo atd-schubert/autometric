@@ -227,7 +227,7 @@ import { register } from "prom-client";
 createServer((req, res) => {
     res.writeHead(200, register.contentType);
     res.end(register.metrics());
-});
+}).listen(9000);
 ```
 
 You can also take the static property `register` of the resulting classes to output only the specific metrics, or merge
